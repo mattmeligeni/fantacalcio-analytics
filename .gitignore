@@ -1,0 +1,15 @@
+# Dati (proprietà delle fonti) e risultati generati
+data/
+output/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Sistema operativo / editor
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,8 @@
+# Dipendenze runtime del progetto. Python 3.10+ obbligatorio (soccerdata).
+# openpyxl e' necessario per leggere gli .xlsx (voti, Statistiche, listone):
+# senza, pandas.read_excel fallisce con ImportError.
+soccerdata==1.9.1
+pandas==3.0.5
+numpy==2.5.2
+openpyxl==3.1.5
+pytest==9.1.1
