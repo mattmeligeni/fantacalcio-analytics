@@ -23,11 +23,34 @@ Raccolta dati **chiusa e validata**: 6 stagioni (2020-21 → 2025-26), 2280 part
 con xG Understat, aggregati stagionali per giocatore, voti per giornata, listone
 2026-27, calendario 2026-27.
 
-**`rules/` e `value/` scritti e validati**: motore di regolamento puro, punteggio
-squadra con modificatori predisposti, parser voti, imbattibilità dei portieri
-misurata, gerarchia rigoristi, e listino con proiezione a due stadi (fantamedia
-e presenze separate) confrontato con l'FVM. Suite di test verde sulle 6 stagioni.
-Prossimo passo: **`auction/`**, il modulo a ritorno più alto, prima dell'asta.
+**v3: `rules/`, `models/`, `simulate/`, `value/` e `backtest/` scritti e
+validati su split temporale.** Disponibilità stimata con le prime giornate
+osservate, rendimento per presenza con una sola contrazione calibrata fuori
+campione, portieri dalla difesa della squadra, rigoristi per status, valore per
+presenza sopra il panchinaro tipo, prezzi a tasso unico. Rigiocando le aste
+2022-23 → 2025-26 batte la versione precedente e la baseline "punti dell'anno
+scorso" su punti e su valore realizzato (`docs/METODO.md` §6.12). Suite verde
+(71 test). Prossimo passo: **`auction/`**.
+
+## Applicazione
+
+```bash
+pip install -e ".[app]"
+streamlit run app/fantacalcio.py
+```
+
+Quattro pagine, tutte offline una volta importati i dati:
+
+| pagina | cosa fa |
+|---|---|
+| **Dati** | importa dai Download i file Fantacalcio.it (Statistiche della stagione, voti per giornata, listone), scarica la stagione da Understat con `soccerdata`, ricalcola il listino |
+| **Listino** | prezzi per le giornate che restano, confronto con l'FVM, motivo di ogni prezzo; filtri per ruolo, squadra, liberi |
+| **Asta e mercato** | assegnazioni in tempo reale, crediti e offerta massima di ogni squadra, inflazione e prezzi dei rimasti riprezzati, annulla, svincoli; stato salvato a ogni operazione in `data/app/lega.json` |
+| **La mia squadra** | modulo e undici consigliati per la prossima giornata, panchina ordinata per ruolo, minuti delle ultime partite (Understat), svincoli che migliorano davvero la rosa |
+
+Aggiornamento settimanale: scarica da Fantacalcio.it le **Statistiche** della stagione in
+corso nella cartella Download, poi in **Dati**: «Importa», «Scarica Understat», «Ricalcola».
+I file non vengono mai sovrascritti: ogni import è una copia datata in `data/raw/`.
 
 ## Ambiente
 
@@ -39,8 +62,8 @@ pip install -e .                # installa il progetto e le dipendenze
 pip install pytest              # per la suite di test
 ```
 
-`pip install -e .` (editable) mette `rules`, `ingest` e `value` sul path: da quel
-momento `python value/listino.py`, `python -m value.listino` e i test funzionano
+`pip install -e .` (editable) mette `rules`, `ingest`, `models`, `simulate`, `value` e
+`backtest` sul path: da quel momento `python -m value.listino` e i test funzionano
 da qualunque cartella. `openpyxl` (dipendenza) serve per leggere gli `.xlsx`.
 
 ## Struttura del codice
@@ -51,21 +74,26 @@ da qualunque cartella. `openpyxl` (dipendenza) serve per leggere gli `.xlsx`.
 | `rules/fantavoto.py` | motore puro: dal voto + eventi al fantavoto, imbattibilità, soglie gol |
 | `rules/giornata.py` | punteggio squadra + protocollo `Modificatore` (no-op con tupla vuota) |
 | `ingest/voti.py` | parser dei file Voti per giornata (gestisce blocchi squadra, `ALL`, `6*`) |
-| `ingest/componenti.py` | pannello componenti della fantamedia (voto, azione, rigori, malus, portiere), in cache |
-| `value/dati.py` | pannelli Statistiche/listone + imbattibilità portieri misurata |
-| `value/proiezione.py` | proiezione a due stadi: fantamedia **scomposta** e presenze, contrazione unica calibrata |
-| `value/rigoristi.py` | rigoristi: gerarchia + proiezione dei rigori per **status** (volume, conversione, cambio club) |
-| `value/rimpiazzo.py` | livelli di rimpiazzo sulla domanda di titolari |
-| `value/budget.py` | quota crediti strategica per ruolo (§6.3), misurata |
-| `value/listino.py` | listino: valore→prezzo (funzione sostituibile), coerenza col budget, confronto FVM |
+| `ingest/fonti.py` | Statistiche, listone, partite con nomi squadra riconciliati (fallisce se un nome resta fuori) |
+| `ingest/panel.py` | pannelli giocatore × giornata (fantavoto dal motore) e giocatore × stagione (anche a zero presenze) |
+| `models/istantanea.py` | l'asta come la si vede quel giorno: universo, club, giornate osservate, storico solo passato |
+| `models/disponibilita.py` | presenze attese: logistica per ruolo con le prime giornate osservate |
+| `models/rendimento.py` | fantamedia per famiglia (voto, azione, malus), una sola contrazione con K stimato fuori campione |
+| `models/squadre.py` | difesa (componente portiere) da xG ancorato ai gol, rigori di squadra |
+| `models/rigori.py` | rigoristi: quota dei rigori di squadra calciati in campo, per status |
+| `models/proiezione.py` | addestra tutto sulle aste passate e ricompone i punti attesi |
+| `simulate/lega.py` | lega simulata: draft, formazione settimanale col modulo migliore, valore marginale |
+| `value/valore.py` | valore per presenza sopra il panchinaro tipo, prezzi a tasso unico (funzioni sostituibili) |
+| `value/listino.py` | listino 2026-27: proiezione, valore, prezzo, FVM, gerarchie contese |
 | `value/report.py` | genera `output/listino.csv` e `output/listino.html` con il motivo per riga |
-| `tests/` | test unitari del motore + accettazione sulle 6 stagioni + invarianti del listino |
+| `backtest/` | aste 2022-23 → 2025-26 rigiocate: metriche su punti e valore, confronto con la v2 da git |
+| `tests/` | motore, pannelli, istantanea senza sbirciate, simulazione, prezzi, accettazione sul backtest |
 
 ```bash
 python -m pytest -q                 # esegue tutta la suite
 python -m value.report              # genera output/listino.csv e output/listino.html
-python -m value.listino             # stampa occasioni, trappole, quote per ruolo
-python -m value.rigoristi           # gerarchia e proiezione dei rigoristi
+python -m value.listino             # stampa il listino e le quote per ruolo
+python -m backtest.confronto        # rigioca le aste storiche, v2 contro v3: output/backtest/confronto.html
 ```
 
 ## Script esistenti

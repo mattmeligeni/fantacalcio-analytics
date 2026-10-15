@@ -120,3 +120,42 @@ def test_soglie_gol():
     assert reti_da_punti(72.0) == 2     # 66 + 6
     assert reti_da_punti(78.0) == 3
     assert reti_da_punti(0.0) == 0
+
+
+# --- motore vettoriale: identico al motore scalare riga per riga ---------- #
+def test_vettoriale_coincide_con_lo_scalare_su_casi_sintetici():
+    import itertools
+
+    import numpy as np
+    import pandas as pd
+
+    from rules import fantavoto_vettoriale
+
+    righe = []
+    for ruolo, voto, gf, rf, rs, gs, rp, amm, esp, ass, au in itertools.product(
+            "PDCA", [6.0, None], [0, 2], [0, 1], [0, 1], [0, 2], [0, 1],
+            [0, 1], [0, 1], [0, 1], [0, 1]):
+        righe.append(dict(ruolo=ruolo, voto=np.nan if voto is None else voto, gf=gf,
+                          rf=rf, rs=rs, gs=gs, rp=rp, amm=amm, esp=esp, ass=ass, au=au))
+    df = pd.DataFrame(righe)
+    vett = fantavoto_vettoriale(df)
+    for r, v in zip(df.itertuples(), vett):
+        p = Prestazione(ruolo=r.ruolo, voto=None if np.isnan(r.voto) else r.voto,
+                        gf=r.gf, gs=r.gs, rp=r.rp, rf=r.rf, rs=r.rs, au=r.au,
+                        amm=r.amm, esp=r.esp, ass=r.ass)
+        atteso = fantavoto(p)
+        if atteso is None:
+            assert np.isnan(v)
+        else:
+            assert abs(atteso - v) < 1e-9
+
+
+def test_vettoriale_usa_i_pesi_della_lega():
+    import pandas as pd
+
+    from rules import fantavoto_vettoriale
+
+    df = pd.DataFrame([dict(ruolo="P", voto=6.0, gf=0, rf=0, rs=0, gs=0, rp=0,
+                            amm=0, esp=0, ass=0, au=0)])
+    assert fantavoto_vettoriale(df).iloc[0] == 7.0              # imbattibilita' +1
+    assert fantavoto_vettoriale(df, LEGA_NO_IMB).iloc[0] == 6.0

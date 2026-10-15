@@ -16,10 +16,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+app = ["streamlit"]
 
 # I pacchetti del progetto. Installazione editable: `pip install -e .`
-# Dopo di che `import rules`, `import ingest`, `import value` funzionano da
+# Dopo di che `import rules`, `import models`, `import value`, ... funzionano da
 # qualunque cartella e con qualunque forma di lancio (python value/listino.py,
 # python -m value.listino, dentro i test), senza trucchi sul path.
 [tool.setuptools]
-packages = ["rules", "ingest", "value"]
+packages = ["rules", "ingest", "models", "simulate", "value", "backtest", "auction", "inseason"]

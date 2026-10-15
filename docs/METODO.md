@@ -3,13 +3,18 @@
 Documento di progetto: obiettivi, scelte modellistiche, risultati validati e lezioni imparate. Gli schemi esatti
 dei file e le trappole di parsing sono in [`DATI.md`](DATI.md).
 
-**Stato: raccolta dati chiusa e validata. `rules/` e `value/` (listino v2)
-scritti e validati.** Motore di regolamento puro, punteggio squadra con
-modificatori predisposti, parser voti; fantamedia scomposta e proiettata a due
-stadi con contrazione unica calibrata, rigori proiettati per status, imbattibilità
-misurata, coerenza col budget §6.3. Artefatti in `output/listino.{csv,html}`.
-Suite verde (52 test). Prossimo passo: **`auction/`**, il modulo a ritorno più
-alto, da avere pronto prima dell'asta. Installazione: `pip install -e .`.
+**Stato (ottobre 2026): v3. Raccolta dati chiusa e validata; `rules/`, `models/`,
+`simulate/`, `value/` e `backtest/` scritti e validati su split temporale.**
+Pannello unificato con i tesserati a zero presenze, istantanea d'asta che non
+vede il futuro, disponibilità con le prime giornate osservate, rendimento con
+una sola contrazione calibrata fuori campione, portieri dalla difesa della
+squadra (xG ancorato ai gol), rigoristi per quota di status, valore per presenza
+sopra il panchinaro tipo, prezzi a tasso unico con monte esatto. Il backtest
+2022-23 → 2025-26 batte la v2 e la baseline su punti e su valore realizzato
+(§6.12). Artefatti in `output/listino.{csv,html}` e `output/backtest/`. Suite
+verde (71 test). Prossimo passo: **`auction/`**. Installazione: `pip install -e .`.
+**Il listino va rigenerato il giorno dell'asta** con i voti delle giornate già
+giocate in `data/raw/Voti/26-27/`: è il guadagno più grande misurato (§6.10).
 
 ---
 
@@ -296,6 +301,17 @@ rimpiazzo. **Non cambia la strategia, la conferma.** Implementato in
 `value/dati.py` (`clean_sheet_portieri`, `con_imbattibilita`): il listino usa i
 punti con imbattibilità per i portieri.
 
+> **Revisione v3 — la quota per ruolo non è una costante strutturale.** Misurata
+> come *valore marginale realizzato* per una squadra con panchina (§6.11, rose
+> rigiocate con i fantavoti veri), la quota dei centrocampisti vale 46%, 3%, 51%,
+> 27% nelle quattro stagioni 2022-23 → 2025-26, e cambia di decine di punti a
+> seconda di come la stanza compone le rose. Le mediane qui sopra davano una
+> falsa precisione e la v2 le **imponeva** al listino: un punto di portiere
+> costava il 78% più di uno di difensore. Dalla v3 la quota è un **risultato**
+> (tasso crediti/valore unico per tutti i ruoli): sul listino 2026-27 esce
+> P 10,0% · D 26,1% · C 29,9% · A 33,9%, vicina alla media realizzata nel
+> backtest con le rose del mercato (8,5 · 25,9 · 31,3 · 34,3).
+
 ### 6.4 Persistenza anno su anno, **dentro il ruolo**
 
 1311 coppie giocatore-stagione con ≥10 presenze in entrambe le annate.
@@ -323,6 +339,16 @@ Da qui discendono l'architettura a due stadi, la centralità dell'asta a stagion
 avviata, e il fatto che il mercato prezzi male perché si ancora al numero meno
 persistente disponibile.
 
+> **Revisione v3 — la persistenza delle presenze qui sopra è sottostimata.**
+> Le coppie sono filtrate a ≥10 presenze in *entrambe* le stagioni: si escludono
+> proprio i casi in cui la disponibilità cambia (troncamento), e la pendenza
+> crolla. Su tutte le coppie di tesserati, zeri inclusi, la pendenza delle
+> presenze è **P 0,75 · D 0,50 · C 0,54 · A 0,48** (contro 0,22-0,37 usate dalla
+> v2). La conclusione strategica resta (i punti totali sono rumorosi, il mercato
+> si ancora a loro), ma la v2 contraeva le presenze di tutti verso "titolare":
+> portieri proiettati a 25 presenze contro 10 reali, dispersione schiacciata da
+> 12 a 3,5. Vedi §6.10.
+
 ### 6.5 Regola di contrazione
 
 Pendenze 0,44 P / 0,50 D / 0,45 C / 0,54 A. Regola applicabile anche a mente:
@@ -336,6 +362,16 @@ Implementazione: contrazione empirico bayesiana con peso proporzionale alle
 presenze, verso la media di ruolo; modello gerarchico completo per neopromossi e
 giovani. Ponderare le stagioni con decadimento esponenziale, dimezzamento
 intorno alle due stagioni.
+
+> **Revisione v3.** La costante K della contrazione si sceglie per minimo
+> errore di previsione sulle aste storiche di addestramento (per ruolo e
+> famiglia), non da una pendenza troncata; i valori risultano vicini ai vecchi
+> (20-80 presenze pesate). La media di ruolo verso cui si contrae è quella di
+> **tutti** i giocatori pesata per presenze, non dei soli titolari (≥15
+> presenze): il prior dei titolari gonfiava le riserve. Per i bonus degli
+> attaccanti conviene una media che cresce con la disponibilità proiettata
+> (chi gioca di più segna di più a partita); per il voto di D e C no (+6-10%
+> di errore). Implementato in `models/rendimento.py`.
 
 ### 6.6 Altri risultati
 
@@ -421,7 +457,10 @@ che resta fa 2,59 rigori l'anno dopo, uno che cambia 0,76 → fattore 0,29). Il
 punto: essere il rigorista vale ~9 punti stagione, convertire meglio ~1,5. Il
 modello proietta *chi li calcia* e li somma alla fantamedia scomposta.
 
-**Coerenza listino ↔ budget (§6.3).** La quota crediti per ruolo la fissa la
+**Coerenza listino ↔ budget (§6.3).** *Superata nella v3, era un errore:*
+imporre la quota §6.3 a una proiezione compressa dava a ogni ruolo un tasso
+crediti/punto diverso (P 6,3 · D 3,6 · C 4,3 · A 4,5). Vedi la revisione in §6.3
+e §6.11. Testo originale: la quota crediti per ruolo la fissa la
 strategia §6.3 (misurata sui punti realizzati), non la proiezione, che
 compressa drifta verso i difensori. Il listino alloca **fra** i ruoli con la
 quota §6.3 e **dentro** il ruolo con il valore sopra il rimpiazzo proiettato:
@@ -442,6 +481,111 @@ portiere titolare sostituito dà due imbattibilità ma una sola per la squadra. 
 massimo, 21 clean sheet (Provedel, Lazio 2022-23), è la miglior difesa reale di
 quella stagione, non un artefatto.
 
+### 6.10 Disponibilità: le prime giornate valgono più dell'anno prima (v3)
+
+Obiettivo: frazione delle giornate conteggiate (3ª-38ª) in cui il giocatore
+prende voto. Misurato su "aste storiche" ricostruite (`models/istantanea.py`:
+universo dei tesserati, club all'asta, solo dati anteriori all'asta):
+
+- le **presenze nelle prime 2 giornate** correlano 0,55-0,73 con quelle del
+  resto della stagione; le presenze dell'anno prima 0,36-0,67. È la regola §3
+  ("usa le prime giornate per la disponibilità") misurata: la v2 non la usava;
+- logistica frazionaria per ruolo con ridge (`models/disponibilita.py`):
+  correlazione con le presenze reali **0,59-0,77** fuori campione (v2:
+  0,32-0,57), errore medio 5,8-8,0 presenze (v2: 9,9-16,5);
+- un **boosting** (HistGradientBoosting) sugli stessi dati fa peggio
+  (0,56-0,70): a livello giocatore-stagione il campione è piccolo e la
+  relazione quasi lineare nel logit. Resta il logistico, senza dipendenze;
+- **concorrenza nel reparto** e **normalizzazione per squadra** non migliorano
+  la previsione: l'informazione è già nelle presenze recenti e osservate. Resta
+  solo un **tetto** in porta (la somma delle disponibilità dei portieri di una
+  squadra non supera quella storica: uno solo gioca);
+- **senza giornate osservate** (listino d'estate) la correlazione scende a
+  0,38-0,74 e i cambi di gerarchia estivi sono invisibili (Vicario arrivato da
+  titolare alla Juventus è per il modello un esordiente). Il listino li
+  segnala confrontando la gerarchia del modello con quella dell'FVM; si
+  risolvono rigenerando il listino dopo le prime giornate.
+
+Portieri: la componente portiere (gol subiti, imbattibilità, rigori parati) si
+proietta dalla **difesa della squadra**, non dal portiere (`models/squadre.py`):
+xG concessi l'anno prima riscalati ai gol della stagione (fattore da 1,02 nel
+2020-21 a 0,87 nel 2025-26: l'xG grezzo avrebbe introdotto una deriva, §5),
+neopromosse con la media storica delle neopromosse (−1,34 a partita contro
+−0,86). Errore fuori campione 0,12 contro 0,135 dei gol subiti e 0,19 della media.
+
+Rigoristi (`models/rigori.py`): quota dei rigori della squadra calciati dal
+giocatore **nelle partite in cui era in campo**, contratta verso zero (1,5
+rigori di pseudo-conteggio), status maturato in un altro club al 15%; rigori
+attesi = rigori di squadra a partita × quota × presenze. Correlazione coi
+rigori calciati 0,53 (v2: 0,50), calibrata (pendenza 0,96). Il modello assegna
+circa metà dei rigori totali: l'altra metà la calciano rigoristi nuovi, che
+nessuno può anticipare; ridistribuirla peggiora l'errore.
+
+### 6.11 Il valore: presenze × vantaggio per partita, non punti totali (v3)
+
+Con una panchina, una giornata saltata non costa i punti del titolare ma la
+differenza col compagno che entra. Simulando la formazione settimanale di una
+lega di 8 rose (`simulate/lega.py`: modulo migliore fra i sette del Classic
+fra chi prende voto), il valore marginale di D, C e A correla **0,93-0,98** con
+"presenze × vantaggio per partita sul rimpiazzo" e solo **0,64-0,75** con i
+punti totali sopra il rimpiazzo usati dalla v2. La v2 premiava chi gioca tanto
+anche se mediocre.
+
+Funzione di default (`value/valore.py`):
+
+    valore = presenze proiettate × (fantamedia proiettata − fantamedia del panchinaro tipo)
+
+con il panchinaro tipo = media dei giocatori fra il rango 1,5k e 2,5k per punti
+proiettati (k = domanda di titolari). Prezzo = 1 + tasso × valore, **tasso
+unico** per tutti i ruoli, 3800 contendibili ripartiti sui 200 giocatori che
+riempiono le rose: la somma dei prezzi delle rose è esattamente 4000 (la v2
+dava il credito di pavimento a tutti i 509, somma 4314).
+
+La simulazione resta come funzione alternativa (`valore_simulato`, il punto di
+aggancio §7.1 per i modificatori), ma **non** è il default: il valore dei
+portieri dipende da quanti titolari in porta restano svincolati (24 posti in
+rosa per 20 titolari), e a seconda dell'ipotesi la simulazione dà ai portieri
+dal 13% al 25% del valore, contro l'8,5% realizzato. La formula per presenza è
+la più robusta al contesto (§6.12).
+
+### 6.12 Backtest v2 → v3 (aste 2022-23 → 2025-26)
+
+`python -m backtest.confronto` rigioca quattro aste: per ognuna i modelli si
+addestrano solo sulle aste precedenti, la v2 si estrae da git (`bd4016e`) e gira
+con le sue funzioni originali sugli stessi universi. Medie sulle quattro
+stagioni, dentro il ruolo, P · D · C · A.
+
+| metrica (punti dalla 3ª giornata) | ingenuo (punti anno prima) | v2 | v3 senza giornate | v3 con 2 giornate |
+|---|---|---|---|---|
+| Spearman, tutti | .64 · .39 · .41 · .31 | .60 · .39 · .43 · .34 | .66 · .43 · .45 · .39 | **.69 · .60 · .61 · .62** |
+| Spearman fra i rilevanti | .47 · .10 · .14 · .24 | .33 · .03 · .13 · .24 | .51 · .10 · .12 · .30 | **.58 · .27 · .28 · .54** |
+| distorsione (punti) | −9 · −17 · −22 · −17 | +70 · +30 · +33 · +50 | −5 · 0 · +1 · +1 | **−3 · 0 · 0 · +3** |
+| calibrazione (1 = giusta) | .74 · .39 · .41 · .33 | 2,41 · 1,30 · 1,38 · 1,16 | 1,17 · .96 · .93 · .73 | **.98 · 1,00 · .96 · .86** |
+| errore medio (punti) | 29 · 61 · 63 · 75 | 86 · 60 · 64 · 78 | 35 · 54 · 57 · 64 | **31 · 47 · 51 · 55** |
+| correlazione presenze | — | .57 · .38 · .43 · .32 | .74 · .43 · .46 · .38 | **.77 · .59 · .60 · .59** |
+
+"Rilevanti" = unione dei primi 3k per punti reali e per ciascun modello: lo
+stesso insieme per tutti.
+
+Valore economico: correlazione (Pearson, tutti i ruoli insieme) fra valore
+previsto e valore marginale **realizzato** rigiocando la stagione con i
+fantavoti veri, in tre contesti di rose:
+
+| candidato | rose dal mercato (punti anno prima) | lega efficiente (proiezioni v3) | rose dai prezzi v2 |
+|---|---|---|---|
+| v2 | 0,355 | 0,312 | 0,249 |
+| v3 senza giornate | 0,394 | 0,377 | 0,295 |
+| v3 con 2 giornate | **0,428** | **0,433** | **0,360** |
+
+La v3 vince in tutti i contesti. Sullo Spearman il margine è più piccolo
+(0,28-0,31 contro 0,24-0,28): il valore realizzato di una singola stagione è
+molto rumoroso, soprattutto per i difensori.
+
+Limiti dichiarati: la formazione simulata sa chi giocherà (il limite di 5
+sostituzioni non è simulato); l'universo storico è ricostruito dai tesserati
+della stagione meno gli arrivi di gennaio; l'FVM storico non esiste, quindi il
+confronto col mercato vero si potrà fare solo da questa stagione in avanti.
+
 ---
 
 ## 7. Architettura
@@ -450,14 +594,14 @@ quella stagione, non un artefatto.
 fanta/
 ├── data/raw/          originali, MAI modificati, con data di scarico
 ├── data/panel/        csv consolidati
-├── ingest/            parser + anagrafica di riconciliazione (congelata)
-├── rules/             regolamento + fantavoto + giornata          [PURO]
-├── models/            disponibilità, voto base, eventi, squadre, shrinkage
-├── simulate/          Monte Carlo su giornate residue, con correlazioni
-├── value/             rimpiazzo, listino, rosa ottimale
-├── auction/           stato d'asta, inflazione, interfaccia Streamlit
-├── inseason/          formazione, capitano, panchina, svincoli
-└── backtest/          split temporale, aste simulate contro FVM
+├── ingest/            parser voti, fonti, pannelli unificati (giornata, stagione)
+├── rules/             regolamento + fantavoto + giornata + moduli  [PURO]
+├── models/            istantanea d'asta, disponibilità, rendimento, squadre, rigori
+├── simulate/          lega simulata: draft, formazione settimanale, valore marginale
+├── value/             valore, prezzi, listino, report
+├── auction/           stato d'asta, inflazione, interfaccia Streamlit   [da fare]
+├── inseason/          formazione, capitano, panchina, svincoli          [da fare]
+└── backtest/          split temporale, metriche su punti e valore, confronto v2
 ```
 
 **Stack:** Python 3.12 in venv. pandas (tutto in memoria: ~100k righe
@@ -503,11 +647,11 @@ implementazione, ma non renderla impossibile.
 
 ### Scelte modellistiche
 
-- **Boosting (LightGBM) solo per la disponibilità.** Campione ~100k righe
-  giocatore-partita, obiettivo binario "prende voto sì/no", interazioni non
-  lineari (minuti recenti, giorni dall'ultima gara, impegni di coppa, concorrenti
-  nel ruolo). Da **calibrare** con regressione isotonica: serve una probabilità
-  affidabile per la simulazione. Metriche log loss e Brier, **mai** accuratezza.
+- **Disponibilità: logistica, non boosting (misurato, §6.10).** L'idea iniziale
+  era LightGBM su ~100k righe giocatore-partita. A livello giocatore-stagione
+  (l'unità che serve al listino) un boosting fa peggio della logistica
+  frazionaria con ridge. Un modello per partita (minuti recenti, giorni di
+  riposo, coppe) resta un'estensione possibile per `inseason/`.
 - **Niente boosting sul rendimento.** ~3k righe giocatore-stagione, correlazioni
   0,4–0,5: segnale debole e campione piccolo sono le condizioni in cui gli alberi
   sovradattano. Voto base con effetti misti e contrazione; eventi bonus con
@@ -529,9 +673,10 @@ partita-squadra o una copula gaussiana sui residui. L'output è una
 **distribuzione**, non un numero.
 
 ### Dal valore al prezzo
-Rimpiazzo per ruolo sulla domanda di titolari → valore sopra il rimpiazzo,
-troncato a zero → ripartizione dei 3800 contendibili in proporzione, più 1
-credito di pavimento → rosa ottimale come zaino a vincoli multipli.
+Panchinaro tipo per ruolo (ranghi 1,5k-2,5k sulla domanda di titolari) →
+valore = presenze × vantaggio per partita, troncato a zero → 3800 contendibili
+ripartiti in proporzione sui 200 delle rose con un tasso unico, più 1 credito
+di pavimento (§6.11) → rosa ottimale come zaino a vincoli multipli (da fare).
 
 Limite noto: massimizzare i punti attesi non è massimizzare la probabilità di
 vincere, perché il premio è concentrato sul primo posto. Raffinamento: ricottura
@@ -580,20 +725,20 @@ Pensato per essere **interrompibile**.
    (`rules/config.py` regolamento dichiarativo + modificatori predisposti §7.1,
    `rules/fantavoto.py` motore puro, `rules/giornata.py` punteggio squadra,
    `ingest/voti.py` parser, `tests/` sulle 6 stagioni)
-2. **`ingest/`** + pannello unificato + anagrafica congelata *(parser voti fatto;
-   resta il pannello unificato e l'anagrafica xG. `Cod.` verificata come chiave
-   di join sicura, §6.7)*
-3. ~~**`value/rimpiazzo.py`** e **`value/listino.py`** (listino v2)~~ **FATTO**
-   (`value/dati.py` pannelli + imbattibilità misurata, `ingest/componenti.py`
-   pannello componenti in cache, `value/proiezione.py` due stadi con fantamedia
-   **scomposta** e contrazione **unica** calibrata, `value/rimpiazzo.py` su
-   domanda titolari, `value/rigoristi.py` proiezione dei rigori per **status**,
-   `value/budget.py` quota §6.3, `value/listino.py` valore sostituibile e coerenza
-   di ruolo, `value/report.py` → `output/listino.csv` e `output/listino.html`).
-   Vedi §6.8-6.9. Disaccordi col mercato lasciati espliciti per il backtest.
+2. ~~**`ingest/`** + pannello unificato~~ **FATTO (v3)** (`ingest/panel.py`
+   giocatore × giornata e × stagione con i tesserati a zero presenze,
+   `ingest/fonti.py` Statistiche, listone, partite con nomi riconciliati).
+   *Resta l'anagrafica xG giocatore (Understat ↔ Fantacalcio) congelata.*
+3. ~~**`value/`** listino~~ **RIFATTO (v3)**: `value/valore.py` valore per presenza
+   e prezzi a tasso unico, `value/listino.py`, `value/report.py`. Vedi §6.11.
 4. **`auction/`** — massimo ritorno sull'investimento (**prossimo passo**)
-5. **`models/`** e **`simulate/`**
-6. **`backtest/`** per ultimo
+5. ~~**`models/`** e **`simulate/`**~~ **FATTO (v3)**: `models/istantanea.py`,
+   `disponibilita.py`, `rendimento.py`, `squadre.py`, `rigori.py`,
+   `proiezione.py`; `simulate/lega.py` (formazione e valore marginale).
+   *Resta la simulazione stagionale con correlazioni fra compagni.*
+6. ~~**`backtest/`**~~ **FATTO (v3)**: `backtest/storico.py` (punti),
+   `backtest/economico.py` (valore realizzato), `backtest/confronto.py`
+   (v2 → v3, §6.12), `backtest/v2_legacy.py` (la v2 rieseguita da git).
 
 Se il tempo finisce: tagliare `models/` e `simulate/`, tenere rimpiazzi, listino
 e assistente d'asta. Si perde forse un quarto del vantaggio.
@@ -608,8 +753,11 @@ e assistente d'asta. Si perde forse un quarto del vantaggio.
 | identità rigori | `Σ Rf = pk`, `Σ Rs = pkatt − pk` (solo dove `pk` esiste) |
 | aggregazione voti | coincide con le Statistiche su `Pv`, `Gf`, `Gs`, `Rp`, `Ass`, `Esp`, `Au`, `Mv`, `Fm` |
 | anagrafica | ≥97% aggancio univoco sui giocatori con `Pv ≥ 20` |
-| calibrazione disponibilità | Brier e log loss su split temporale |
-| valore economico | correlazione di rango contro FVM sui punti realizzati |
+| calibrazione disponibilità | correlazione con le presenze reali su split temporale (`tests/test_backtest.py`) |
+| proiezione | batte "punti dell'anno scorso" in ogni ruolo, distorsione < 8 punti, calibrazione 0,75-1,25 |
+| istantanea d'asta | nessun dato posteriore all'asta (`tests/test_istantanea.py`) |
+| prezzi | monte esatto 4000 sulle rose, tasso crediti/valore unico |
+| valore economico | correlazione col valore marginale realizzato (`backtest/economico.py`); contro l'FVM appena esisterà uno storico di FVM |
 
 ---
 
@@ -617,10 +765,11 @@ e assistente d'asta. Si perde forse un quarto del vantaggio.
 
 Piccole, tutte rinviabili.
 
-1. **Controllo di scala dell'xG**, due righe: sommare `home_xg`, `away_xg`, `gf`,
+1. ~~**Controllo di scala dell'xG**~~ — **fatto (v3)**, `models/squadre.py`: fattore
+   per stagione da 1,02 a 0,87. Testo originale: due righe: sommare `home_xg`, `away_xg`, `gf`,
    `ga` su `partite.csv` e ricavare il fattore di riscalamento verso i gol reali.
    È la correzione più importante per i portieri e quindi per l'imbattibilità.
-2. **Ricalcolare l'imbattibilità** dai voti per giornata e correggere la quota
+2. ~~**Ricalcolare l'imbattibilità**~~ — **fatto** (§6.3, §6.9): dai voti per giornata e correggere la quota
    crediti dei portieri (§6.3).
 3. ~~Verificare `understat_player_season.csv`~~ — **fatto: contiene `npg` e
    `npxG`.** L'approssimazione con il fattore 0,76 esce dal progetto: usare
@@ -650,6 +799,31 @@ errori è il modo canonico in cui muoiono i progetti di dati. Ogni join deve
 avere un criterio di validazione indipendente e fallire rumorosamente. Vedi il
 caso dei nomi squadra in [`DATI.md`](DATI.md).
 
+**Stimare una persistenza su un campione troncato.** Filtrare le coppie a
+≥10 presenze in entrambe le stagioni esclude chi smette di giocare e fa crollare
+la pendenza delle presenze (0,22 invece di 0,75 per i portieri). Il modello v2
+ne usciva convinto che tutti fossero titolari (§6.4). Le stagioni a zero
+presenze sono dati, non rumore: tenerle.
+
+**Contrarre verso la media dei titolari.** Il prior "giocatori con ≥15
+presenze" è più alto della media vera: gonfia proprio le riserve, che sono
+la maggioranza del listone.
+
+**Valutare sui punti totali in una lega con panchina.** Le giornate saltate le
+copre la panchina: il valore è presenze × vantaggio per partita (§6.11).
+
+**Imporre una quota per ruolo misurata a posteriori.** Contiene la fortuna e
+oscilla da una stagione all'altra (§6.3, revisione): fissarla come vincolo dà a
+ogni ruolo un prezzo diverso per lo stesso punto. Deve essere un risultato.
+
+**Controlli contabili che nessuno guarda.** La somma dei prezzi della v2 era
+4314 su un monte di 4000, e i portieri di una squadra sommavano fino a 100
+presenze su 36. Erano test facili da scrivere e non c'erano: ora ci sono.
+
+**Validare la proiezione solo con identità contabili.** I 52 test della v2
+erano verdi su un modello che non batteva "punti dell'anno scorso". Un test di
+accettazione deve misurare la previsione fuori campione (`tests/test_backtest.py`).
+
 **Formati che si assomigliano e significano cose diverse.** La stringa `'2021'`
 è la stagione 2020-21 per soccerdata e la stagione 2021-22 per FBref. Mai una
 funzione di conversione unica per fonti diverse.
@@ -672,7 +846,7 @@ funzione di conversione unica per fonti diverse.
    rigorista del ~9-13% (verificato: gol totali di lega tornano solo con `Gf+Rf`).
    Codificato in `rules/fantavoto.py` e coperto da `tests/test_aggregazione.py`.
 3. ~~**Colonna `Under`** del listone~~ — **risolto: è l'età** (numeri 18-40), non
-   un flag. Usata come `eta` in `value/dati.carica_listone`.
+   un flag. Usata come `eta` in `ingest/fonti.carica_listone`.
 
 ---
 

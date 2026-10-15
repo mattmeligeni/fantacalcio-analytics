@@ -123,3 +123,40 @@ def somma_fantavoti(prestazioni: list[Prestazione], lega: LeagueRules = LEGA) ->
     """Totale di fantapunti degli undici schierati (chi ha voto)."""
     return round(sum(fv for p in prestazioni
                      if (fv := fantavoto(p, lega)) is not None), 2)
+
+
+# --------------------------------------------------------------------------- #
+# Versione vettoriale, per i pannelli da ~70k righe giocatore × giornata.
+# Stessa aritmetica di `bonus_netti`, stessi pesi di `lega.bonus`: nessuna
+# costante qui. L'equivalenza riga per riga con il motore scalare e' imposta da
+# tests/test_fantavoto.py su dati reali. Lavora su qualunque oggetto con
+# attributi-array (DataFrame pandas, namespace di array numpy): `rules/` resta
+# senza dipendenze da pandas.
+# --------------------------------------------------------------------------- #
+def componenti_bonus(t, lega: LeagueRules = LEGA) -> dict:
+    """Bonus/malus di ogni riga scomposti per famiglia, in punti.
+
+    `t` deve esporre gli array: ruolo, voto (NaN se senza voto), gf, rf, rs, gs,
+    rp, au, amm, esp, ass. Le famiglie sono quelle usate dalla proiezione:
+      azione  = gol su azione + assist
+      rigore  = gol su rigore − rigori sbagliati
+      malus   = ammonizioni, espulsioni, autogol
+      port    = gol subiti, rigori parati, imbattibilita' (solo portieri)
+    La loro somma e' esattamente `bonus_netti` della riga.
+    """
+    b = lega.bonus
+    ha_voto = t.voto == t.voto                     # False sui NaN (senza voto)
+    cs = (t.ruolo == "P") & ha_voto & (t.gs == 0)
+    return {
+        "azione": b.gol_fatto * t.gf + b.assist * t.ass,
+        "rigore": b.gol_fatto * t.rf + b.rigore_sbagliato * t.rs,
+        "malus": b.ammonizione * t.amm + b.espulsione * t.esp + b.autogol * t.au,
+        "port": b.gol_subito * t.gs + b.rigore_parato * t.rp + b.imbattibilita * cs,
+        "cs": cs,
+    }
+
+
+def fantavoto_vettoriale(t, lega: LeagueRules = LEGA):
+    """Fantavoto di ogni riga (NaN dove il giocatore e' senza voto)."""
+    c = componenti_bonus(t, lega)
+    return t.voto + c["azione"] + c["rigore"] + c["malus"] + c["port"]

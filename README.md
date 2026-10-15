@@ -20,12 +20,15 @@ than the official market value (FVM)** under the league's own rules: the edge is
 - **A pure rules engine** (`rules/`): from rating and events to the fantasy score, clean-sheet bonus, goal
   thresholds and team scoring, with a declarative league configuration and pluggable modifiers. Validated with exact
   identities on six seasons of official data.
-- **Two-stage projection** (`value/`): the fantasy average is decomposed (rating, open-play contribution, penalties,
-  maluses, goalkeeper) and projected separately from expected appearances, with a single calibrated shrinkage.
-  Penalty takers are projected by status (volume, conversion, club changes).
-- **From value to price:** replacement levels computed on the demand for *starters* (not squad slots), a measured
-  credit split per role, and a price list compared with the FVM that flags bargains and traps with the reason for
-  each row (`output/listino.html`).
+- **Two-stage projection validated out of sample** (`models/`): expected appearances from a fractional logistic
+  model that uses the matchdays already played before the auction (the strongest predictor), per-appearance output
+  decomposed (rating, open play, maluses) with a single shrinkage tuned out of sample, goalkeepers from their team's
+  defence (xG anchored to actual goals), penalty takers by status.
+- **From value to price:** a simulated league (`simulate/`) shows that with a bench a player is worth his
+  appearances × his per-match edge over a typical bench player, not his total points; one credits-per-value rate for
+  every role, exact 4,000-credit budget, and a price list compared with the FVM with the reason for each row.
+- **Honest backtest** (`backtest/`): four auctions (2022-23 → 2025-26) replayed with only the data available on
+  auction day; the previous version is re-run from git on the same players for a like-for-like comparison.
 - **Data engineering with loud failures:** six seasons (2020-21 → 2025-26), 2,280 matches with Understat xG joined
   to FBref, calibration of Understat against Opta on 1,950 overlapping matches, joins that must validate
   independently instead of silently succeeding at 72%.
@@ -38,9 +41,12 @@ Italian in [`docs/METODO.md`](docs/METODO.md); file schemas and parsing traps in
 | Path | Contents |
 | --- | --- |
 | `rules/` | declarative league rules, fantasy-score engine, team scoring with pluggable modifiers |
-| `ingest/` | parsers for per-matchday ratings and the fantasy-average components panel |
-| `value/` | projections, penalty takers, replacement levels, budget split, price list and HTML/CSV report |
-| `tests/` | engine unit tests, acceptance tests on six seasons, price-list invariants |
+| `ingest/` | parsers, sources with reconciled team names, per-matchday and per-season panels |
+| `models/` | auction-day snapshot, availability, per-appearance output, team defence, penalty takers |
+| `simulate/` | league simulation: draft, weekly line-up with the best formation, marginal value |
+| `value/` | value, prices, price list and HTML/CSV report |
+| `backtest/` | historical auctions replayed: metrics on points and realised value, comparison with the previous version |
+| `tests/` | engine unit tests, panel and no-look-ahead checks, price invariants, backtest acceptance |
 | `understat_setup.py` | download and calibration of the xG sources |
 | `fanta_statistiche.py` | season statistics: formula validation, replacement levels, budget, persistence |
 
@@ -49,7 +55,20 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e . && pip install pytest
 python -m pytest -q          # test suite
 python -m value.report       # generates output/listino.csv and output/listino.html
+python -m backtest.confronto  # replays the historical auctions, previous version vs current
 ```
+
+## Application
+
+```bash
+pip install -e ".[app]"
+streamlit run app/fantacalcio.py
+```
+
+Data import (Fantacalcio.it files from the Downloads folder, Understat via `soccerdata`), the price list for
+the remaining matchdays, a live auction tracker (credits, maximum bid of every team, inflation, re-priced
+remaining players, state saved after every action) and weekly management (suggested formation, recent minutes,
+free-agent swaps).
 
 ## Data
 

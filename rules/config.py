@@ -93,6 +93,15 @@ class Sostituzioni:
 
 
 # --------------------------------------------------------------------------- #
+# Moduli ammessi in formazione (D, C, A; il portiere e' implicito). Sono i sette
+# moduli del Classic. Servono alla simulazione della formazione settimanale
+# (simulate/lega.py), che sceglie ogni giornata il modulo migliore fra questi.
+# --------------------------------------------------------------------------- #
+MODULI_CLASSIC = ((3, 4, 3), (3, 5, 2), (4, 3, 3), (4, 4, 2),
+                  (4, 5, 1), (5, 3, 2), (5, 4, 1))
+
+
+# --------------------------------------------------------------------------- #
 # Parametri economici e di calendario.
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
@@ -108,6 +117,7 @@ class LeagueRules:
     soglie: SoglieGol = field(default_factory=SoglieGol)
     rosa: Rosa = field(default_factory=Rosa)
     sostituzioni: Sostituzioni = field(default_factory=Sostituzioni)
+    moduli: tuple[tuple[int, int, int], ...] = MODULI_CLASSIC
 
     # Modificatori di formazione (difesa, modulo, ...). Vuoto in questa lega.
     # Agiscono sul punteggio squadra in rules/giornata.py, applicati in

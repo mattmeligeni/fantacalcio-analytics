@@ -125,15 +125,29 @@ Il file **non conteggia l'imbattibilità del portiere**, attiva in questa lega. 
 `Fm` letta qui sottostima i portieri. Ricostruirla dai file per giornata: portiere
 con `Gs = 0` e voto reale = imbattuto.
 
-### Pannello componenti (per la proiezione)
+### Pannelli unificati (per modelli e backtest, v3)
 Per scomporre la fantamedia in parti con persistenze diverse (voto, gioco su
 azione, rigori, malus, portiere) NON si usano le Statistiche: la loro colonna
 `Amm` include i cartellini nelle gare senza voto (anomalia sopra), quindi la
 ricomposizione sbaglia di multipli di 0,5. Si usano i **voti per giornata**, dove
-`Amm` è corretto (solo presenze con voto) e `Gf` è già al netto dei rigori: la
-ricomposizione è esatta. Generato da `ingest/componenti.py` in
-`data/panel/componenti_stagione.csv` (rigenerabile), con controllo indipendente
-all'ingresso (somma componenti = fantamedia). Persistenze misurate in docs/METODO.md §6.8.
+`Amm` è corretto (solo presenze con voto) e `Gf` è già al netto dei rigori.
+
+`ingest/panel.py` produce due livelli:
+- **giocatore × giornata** (`carica_giornate`, cache
+  `data/panel/voti_giornata.csv`, ~71k righe): voto (NaN se `6*`), eventi,
+  fantavoto calcolato da `rules.fantavoto_vettoriale` e le quattro famiglie di
+  bonus. Controllo all'ingresso: voto + famiglie = fantavoto, riga per riga;
+  equivalenza col motore scalare imposta da `tests/test_panel.py`.
+- **giocatore × stagione** (`pannello_stagioni`): UNIONE dei tesserati delle
+  Statistiche (anche `Pv = 0`) e degli aggregati dei voti, con club di inizio e
+  fine stagione, presenze nel girone di ritorno, prima giornata giocata. Il
+  vecchio pannello componenti (`ingest/componenti.py`, rimosso nella v3) nasceva
+  solo dai voti e perdeva le stagioni a zero presenze: per la disponibilità era
+  il buco più grave. `data/panel/componenti_stagione.csv` è obsoleto.
+
+Le `Statistiche` registrano il club di **fine** stagione: chi si trasferisce a
+gennaio compare una volta sola, col club d'arrivo. Il club all'asta si ricava
+dalla prima apparizione nei voti (`models/istantanea.da_storico`).
 
 ### Altro
 - 116 righe con `Pv = 0` nel 2025-26 (17,5%). **Non sono spazzatura:** misurano
@@ -399,7 +413,7 @@ Opta, mancava il valore di `xg`.
 
 File tipo: `Listone_20_08_26.xlsx`. **Intestazione sulla PRIMA riga (`header=0`)**
 nel file corrente — NON sulla seconda: `pd.read_excel(header=1)` prende un
-giocatore come intestazione. `value/dati.carica_listone` legge con `header=0`.
+giocatore come intestazione. `ingest/fonti.carica_listone` legge con `header=0`.
 
 **Colonne:** `#` · `Nome` · `Fuori lista` · `Sq.` · `Under` · `R.` · `R.MANTRA` ·
 `PGv` · `MV` · `FM` · `FVM/1000` · `QUOT.` (+ `FantaSquadra` e `Costo`, vuote,
@@ -413,7 +427,7 @@ da compilare dopo l'asta)
   stagione avviata. Non usarlo come sorgente di validazione — usare le
   Statistiche.
 - **18 giocatori marcati fuori lista** con asterisco (colonna `Fuori lista`):
-  `value/dati.carica_listone(escludi_fuori_lista=True)` li toglie → 509 in lista.
+  `ingest/fonti.carica_listone(escludi_fuori_lista=True)` li toglie → 509 in lista.
 - `Under` **è l'età** (numeri 18-40 circa), non un flag: confermato, usato come
   `eta` in `carica_listone`.
 

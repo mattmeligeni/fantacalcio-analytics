@@ -1,152 +1,166 @@
-"""Il listino: dalla proiezione al prezzo consigliato, confrontato con l'FVM.
+"""Il listino d'asta: proiezione → valore → prezzo, confrontato con l'FVM.
 
-Flusso (docs/METODO.md §7 "Dal valore al prezzo"):
-  listone -> proiezione base a due stadi (fantamedia scomposta × presenze) +
-  punti attesi dai rigori (per status) -> valore sopra il rimpiazzo (troncato a
-  zero) -> ripartizione dei contendibili + 1 di pavimento -> confronto con l'FVM.
+Flusso:
+  1. istantanea d'asta (models/istantanea.per_asta): universo dal listone,
+     storico completo, e le giornate della stagione d'asta gia' presenti in
+     data/raw/Voti/ (le prime giornate osservate: §3);
+  2. modello di proiezione addestrato sulle aste storiche ricostruite con le
+     STESSE informazioni (stesso numero di giornate osservate), proiezione;
+  3. valore per presenza sopra il panchinaro tipo (value/valore.py, funzione
+     sostituibile §7.1);
+  4. prezzo: un unico tasso crediti/valore, monte esatto di 4000 sulle rose;
+  5. confronto con l'FVM riportato allo stesso monte sulle rose.
 
-Il calcolo del valore e' dietro una **funzione sostituibile** (`funzione_valore`,
-default additivo): vincolo di docs/METODO.md §7.1. Se si attivano i modificatori si
-passa qui a un valore marginale-simulato senza toccare il resto.
+Cosa NON fa: dire quanto offrire in un dato momento dell'asta. Il prezzo e'
+quanto vale il giocatore se tutti pagassero il giusto; quanto puoi spendere
+date la rosa gia' fatta e i crediti degli avversari e' compito di `auction/`.
 
-Distinzioni che l'output tiene esplicite (Parte 2.4):
-  - **bassa informazione**: giocatori senza storico (prior di ruolo) o con
-    pochissime presenze pesate. Escono vicini alla media PER COSTRUZIONE, quindi
-    NON sono trappole nel senso utile: vanno a parte, marcati.
-  - **trappole vere**: storico abbondante il cui prezzo di mercato eccede la
-    proiezione. Quelle sono segnale.
+Rifare il listino dopo aver messo in data/raw/Voti/26-27/ i voti delle prime
+giornate: il modello passa automaticamente a usare le presenze osservate, il
+predittore di disponibilita' piu' forte di tutti.
 """
 from __future__ import annotations
 
-from typing import Callable
-
 import pandas as pd
 
+from ingest.fonti import carica_listone, carica_partite
+from ingest.panel import carica_giornate, pannello_stagioni
+from models import proiezione as pj
+from models.istantanea import per_asta
 from rules import LEGA, LeagueRules
-from ingest.componenti import carica_componenti
-from value.budget import quote_ruolo
-from value.dati import carica_listone, carica_statistiche
-from value.proiezione import ParametriRuolo, parametri_ruolo, prior_di_ruolo, proietta
-from value.rigoristi import proietta_rigori
-from value.rimpiazzo import valore_sopra_rimpiazzo
+from value.valore import (FunzioneValore, livelli_rimpiazzo, prezzi,
+                          valore_per_presenza)
 
-FunzioneValore = Callable[[pd.DataFrame, LeagueRules], pd.Series]
-
-# soglia di presenze pesate sotto la quale la valutazione e' a bassa informazione
-SOGLIA_BASSA_INFO = 5.0
+SOGLIA_BASSA_INFO = 5.0      # presenze pesate sotto cui la stima e' quasi solo prior
 
 
-def _proietta_listone(lega: LeagueRules, giornata_corrente: int,
-                      par: ParametriRuolo, proj: pd.DataFrame,
-                      rigori: pd.DataFrame) -> pd.DataFrame:
-    """Aggancia a ogni riga del listone la proiezione base + i rigori, o il prior
-    di ruolo se manca lo storico. Squadra e ruolo vengono dal listone 2026-27."""
-    lst = carica_listone()
-    pj = proj.set_index(["Id", "R"])
-    rig = rigori.set_index("Id")
-    id_con_storico = set(proj.Id)
-    righe = []
-    for _, r in lst.iterrows():
-        cod = int(r.Cod) if pd.notna(r.Cod) else None
-        base = dict(Cod=cod, Nome=r.Nome, ruolo=r.ruolo, squadra=r.squadra,
-                    quotazione=r.quotazione, fvm_meta=r.fvm_meta)
-        if cod is not None and (cod, r.ruolo) in pj.index:
-            p = pj.loc[(cod, r.ruolo)]
-            base.update(fm_base=float(p.fm_base), pv_proj=float(p.pv_proj),
-                        punti_base=float(p.punti_base), n_eff=float(p.n_eff),
-                        senza_storico=False, cambio_ruolo=False)
-        else:
-            pr = prior_di_ruolo(r.ruolo, lega, giornata_corrente, par)
-            base.update(**pr, senza_storico=True, cambio_ruolo=(cod in id_con_storico))
-        # componente rigori (0 se non e' un rigorista o manca lo storico)
-        if cod is not None and cod in rig.index:
-            base["rigore_punti"] = float(rig.loc[cod, "rigore_punti"])
-            base["rigori_attesi"] = float(rig.loc[cod, "rigori_attesi"])
-            base["cambio_club_rig"] = bool(rig.loc[cod, "cambio_club"])
-        else:
-            base["rigore_punti"] = 0.0
-            base["rigori_attesi"] = 0.0
-            base["cambio_club_rig"] = False
-        righe.append(base)
-    return pd.DataFrame(righe)
+def giornate_osservate(giornate: pd.DataFrame, stagione: str) -> int:
+    """Ultima giornata della stagione d'asta di cui ci sono i voti (0 se nessuna)."""
+    g = giornate[giornate.stagione == stagione]
+    return int(g.giornata.max()) if len(g) else 0
 
 
-def costruisci_listino(lega: LeagueRules = LEGA, giornata_corrente: int = 0,
-                       funzione_valore: FunzioneValore = valore_sopra_rimpiazzo
-                       ) -> pd.DataFrame:
-    """Il listino completo, ordinato per differenza prezzo−FVM/2 decrescente."""
-    m = carica_componenti()
-    stat = carica_statistiche()
-    par = parametri_ruolo(m)
-    proj = proietta(lega, giornata_corrente, m=m, par=par)
+def riscala_fvm(listino: pd.DataFrame, lega: LeagueRules = LEGA) -> pd.Series:
+    """FVM/2 riportato allo stesso monte dei prezzi: la somma sulle rose (i
+    migliori per FVM nel rispetto degli slot) fa 4000. Isola il disaccordo
+    RELATIVO col mercato dallo scarto di scala fra i due sistemi."""
+    in_rosa = pd.Series(False, index=listino.index)
+    for r, slot in lega.rosa.slot.items():
+        m = listino.ruolo == r
+        in_rosa[listino.fvm_meta[m].nlargest(slot * lega.squadre).index] = True
+    fattore = lega.monte_crediti / listino.fvm_meta[in_rosa].sum()
+    return listino.fvm_meta * fattore
 
-    lst = carica_listone()
-    squadra_2026 = {int(c): s for c, s in zip(lst.Cod, lst.squadra) if pd.notna(c)}
-    rigori = proietta_rigori(lega, giornata_corrente, stat=stat,
-                             squadra_2026=squadra_2026)
 
-    L = _proietta_listone(lega, giornata_corrente, par, proj, rigori)
+# Titolari per squadra e ruolo usati per confrontare le gerarchie (4-4-2 medio).
+TITOLARI_SQUADRA = {"P": 1, "D": 4, "C": 4, "A": 2}
 
-    # punti proiettati = base (fantamedia scomposta × presenze) + rigori
-    L["punti_proj"] = (L.punti_base + L.rigore_punti).round(2)
-    L["fm_proj"] = (L.punti_proj / L.pv_proj.replace(0, pd.NA)).round(3)
 
-    # valore sopra il rimpiazzo (funzione sostituibile, §7.1)
-    L = L.rename(columns={"ruolo": "R"})
-    L["vor"] = funzione_valore(L, lega)
-    L = L.rename(columns={"R": "ruolo"})
+def gerarchia_contesa(listino: pd.DataFrame) -> pd.Series:
+    """Segnala chi il mercato (FVM) considera titolare e il modello no, o viceversa.
 
-    # Prezzo: la quota per ruolo viene dalla strategia (§6.3, value/budget), la
-    # ripartizione DENTRO il ruolo dalla proiezione (VOR). Cosi' il listino e la
-    # ripartizione del budget non si contraddicono (Parte 2.3): l'allocazione fra
-    # ruoli e' quella misurata sui punti realizzati, non quella (piu' difensiva)
-    # che la compressione della proiezione produrrebbe da sola.
-    contendibili = lega.crediti_contendibili
-    quote = quote_ruolo(lega)
-    L["prezzo"] = 1.0
-    for r, budget_r in quote.items():
-        mask = L.ruolo == r
-        vor_r = L.loc[mask, "vor"].sum()
-        crediti_r = budget_r * contendibili
-        if vor_r > 0:
-            L.loc[mask, "prezzo"] = (L.loc[mask, "vor"] / vor_r * crediti_r + 1)
-    L["prezzo"] = L.prezzo.round().astype(int)
+    Senza giornate osservate il modello non vede i cambi estivi di gerarchia
+    (un portiere arrivato dall'estero da titolare e' per lui un esordiente),
+    mentre l'FVM li incorpora. Non si corregge la stima con l'FVM (non c'e'
+    storico di FVM su cui calibrarlo): si segnala, e si rifa' il listino dopo
+    le prime giornate, che risolvono il dubbio meglio di qualunque fonte.
+    """
+    flag = pd.Series("", index=listino.index)
+    for (sq, r), d in listino.groupby(["squadra", "ruolo"]):
+        n = TITOLARI_SQUADRA[r]
+        # in porta il titolare e' uno solo: basta che il mercato ne indichi un
+        # altro; negli altri reparti serve uno scarto netto di gerarchia
+        soglia = n if r == "P" else 2 * n
+        rk_mkt = d.fvm_meta.rank(ascending=False, method="first")
+        rk_mod = d.pv_proj.rank(ascending=False, method="first")
+        per_mercato = d.index[(rk_mkt <= n) & (rk_mod > soglia)]
+        per_modello = d.index[(rk_mod <= n) & (rk_mkt > soglia)]
+        flag[per_mercato] = "titolare per il mercato, riserva per il modello"
+        flag[per_modello] = "titolare per il modello, riserva per il mercato"
+    return flag
 
-    # confronto con l'FVM riscalato allo stesso monte (isola il disaccordo
-    # relativo col mercato, non lo scarto di scala fra i due sistemi)
-    fattore = L.prezzo.sum() / L.fvm_meta.sum() if L.fvm_meta.sum() > 0 else 1.0
-    L["fvm_riscalato"] = (L.fvm_meta * fattore).round(1)
+
+def universo_corrente(listone: pd.DataFrame, corrente) -> pd.DataFrame:
+    """A stagione avviata l'universo e' la rosa ATTUALE (Statistiche della
+    stagione in corso: comprende gli acquisti arrivati dopo il listone e toglie
+    chi e' partito), con FVM e quotazione presi dal listone dove ci sono."""
+    if corrente is None:
+        return listone
+    u = corrente.osservato[["Id", "Nome", "ruolo", "squadra"]].drop_duplicates("Id")
+    extra = [c for c in ["fvm_meta", "quotazione", "eta"] if c in listone.columns]
+    return u.merge(listone[["Id", *extra]], on="Id", how="left")
+
+
+def costruisci_listino(lega: LeagueRules = LEGA, stagione: str | None = None,
+                       funzione_valore: FunzioneValore = valore_per_presenza,
+                       giornata_asta: int | None = None,
+                       dati=None) -> tuple[pd.DataFrame, dict]:
+    """Il listino completo e un dizionario di informazioni sul calcolo.
+
+    Senza argomenti usa la stagione del listone piu' recente e tutto cio' che
+    si sa di quella stagione (ingest/corrente.py). `giornata_asta=0` forza il
+    listino d'estate, senza nulla di osservato.
+    """
+    from ingest.corrente import carica_stagione_in_corso
+    from ingest.importa import stagione_corrente
+    stagione = stagione or stagione_corrente()
+    if dati is None:
+        g = carica_giornate()
+        dati = (g, pannello_stagioni(g), carica_partite(), carica_listone())
+    g, S, P, listone = dati
+    corrente = carica_stagione_in_corso(g, lega) if giornata_asta != 0 else None
+    if corrente is not None and corrente.stagione != stagione:
+        corrente = None
+    if giornata_asta is None:
+        giornata_asta = corrente.giornata if corrente else giornate_osservate(g, stagione)
+    voti_per_giornata = giornate_osservate(g, stagione) > 0
+    ist = per_asta(universo_corrente(listone, corrente), stagione, giornata_asta, g, S, P,
+                   osservato=None if (corrente is None or voti_per_giornata) else corrente.osservato,
+                   partite_osservate=None if corrente is None else corrente.partite)
+    modello = pj.addestra(ist, g, S, P, lega)
+    L = pj.proietta(modello, ist, lega)
+
+    L["valore"] = funzione_valore(L, lega).values
+    L["prezzo"] = prezzi(L, L.valore, lega).round().astype(int)
+    L["fvm_riscalato"] = riscala_fvm(L, lega).round(1)
     L["diff_vs_fvm"] = (L.prezzo - L.fvm_riscalato).round(1)
-
-    # bassa informazione: prior, oppure pochissime presenze pesate (Parte 2.4)
     L["bassa_info"] = L.senza_storico | (L.n_eff < SOGLIA_BASSA_INFO)
+    L["gerarchia"] = gerarchia_contesa(L)
 
-    cols = ["Nome", "ruolo", "squadra", "pv_proj", "fm_proj", "punti_proj",
-            "rigori_attesi", "rigore_punti", "vor", "prezzo", "quotazione",
-            "fvm_meta", "fvm_riscalato", "diff_vs_fvm", "bassa_info",
-            "senza_storico", "cambio_ruolo", "cambio_club_rig", "n_eff"]
-    return (L[cols].sort_values("diff_vs_fvm", ascending=False)
-            .reset_index(drop=True))
+    info = dict(
+        stagione=stagione,
+        giornate_osservate=giornata_asta,
+        fonte_osservate=corrente.fonte if corrente else "nessuna",
+        giornate_conteggiate=pj.disponibilita.giornate_conteggiate(ist, lega)[1],
+        aste_addestramento=modello.aste_addestramento,
+        rimpiazzo=livelli_rimpiazzo(L, lega),
+        squadre=modello.squadre.prevedi(ist),
+        disponibilita=modello.disponibilita.tabella_coefficienti(),
+        rendimento=modello.rendimento.tabella(),
+    )
+    colonne = ["Id", "Nome", "ruolo", "squadra", "eta", "p_voto", "pv_proj",
+               "fm_voto", "fm_azione", "fm_malus", "fm_port", "fm_base",
+               "rigori_attesi", "punti_rigori", "punti_proj", "fm_proj",
+               "valore", "prezzo", "quotazione", "fvm_meta", "fvm_riscalato",
+               "diff_vs_fvm", "bassa_info", "senza_storico", "cambio_club",
+               "neopromossa", "gerarchia", "n_eff"]
+    L = L[[c for c in colonne if c in L.columns]]
+    return L.sort_values("diff_vs_fvm", ascending=False).reset_index(drop=True), info
 
 
-def quote_per_ruolo(listino: pd.DataFrame) -> pd.DataFrame:
-    """Quota del prezzo consigliato per ruolo, da confrontare con §6.3."""
-    q = listino.groupby("ruolo").prezzo.sum()
+def quote_per_ruolo(listino: pd.DataFrame) -> pd.Series:
+    """Quota dei crediti contendibili per ruolo (prezzo − 1 sulle rose)."""
+    q = listino.groupby("ruolo").apply(lambda d: (d.prezzo - 1).clip(lower=0).sum(),
+                                       include_groups=False)
     return (q / q.sum() * 100).reindex(["P", "D", "C", "A"]).round(1)
 
 
 if __name__ == "__main__":
     pd.set_option("display.width", 240)
-    pd.set_option("display.max_columns", 25)
-    lis = costruisci_listino()
-    print(f"listino: {len(lis)} giocatori | bassa info: {int(lis.bassa_info.sum())} "
-          f"| senza storico: {int(lis.senza_storico.sum())}")
-    print("\nquota prezzo per ruolo (%):")
-    print(quote_per_ruolo(lis).to_string())
-    solide = lis[~lis.bassa_info]
-    print("\n=== 15 maggiori OCCASIONI (storico solido) ===")
-    print(solide.head(15)[["Nome", "ruolo", "squadra", "punti_proj", "prezzo",
-          "fvm_riscalato", "diff_vs_fvm", "rigori_attesi"]].round(1).to_string(index=False))
-    print("\n=== 10 maggiori TRAPPOLE (storico solido) ===")
-    print(solide.tail(10)[["Nome", "ruolo", "squadra", "punti_proj", "prezzo",
-          "fvm_riscalato", "diff_vs_fvm", "rigori_attesi"]].round(1).to_string(index=False))
+    pd.set_option("display.max_columns", 30)
+    lis, info = costruisci_listino()
+    print(f"listino {info['stagione']}: {len(lis)} giocatori | giornate osservate "
+          f"{info['giornate_osservate']} | conteggiate {info['giornate_conteggiate']}")
+    print("quota crediti per ruolo (%):", quote_per_ruolo(lis).to_dict())
+    print(lis.head(20)[["Nome", "ruolo", "squadra", "pv_proj", "fm_proj",
+                        "punti_proj", "prezzo", "fvm_riscalato", "diff_vs_fvm"]].round(1))

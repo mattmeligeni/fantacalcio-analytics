@@ -6,3 +6,5 @@ colonne attese non ci sono (docs/DATI.md §9).
 from .voti import leggi_giornata, leggi_stagione
 
 __all__ = ["leggi_giornata", "leggi_stagione"]
+# I pannelli unificati sono in ingest.panel, le altre fonti in ingest.fonti:
+# non si importano qui per non leggere file all'import del pacchetto.
