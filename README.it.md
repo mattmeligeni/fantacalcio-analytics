@@ -29,8 +29,8 @@ osservate, rendimento per presenza con una sola contrazione calibrata fuori
 campione, portieri dalla difesa della squadra, rigoristi per status, valore per
 presenza sopra il panchinaro tipo, prezzi a tasso unico. Rigiocando le aste
 2022-23 → 2025-26 batte la versione precedente e la baseline "punti dell'anno
-scorso" su punti e su valore realizzato (`docs/METODO.md` §6.12). Suite verde
-(71 test). Prossimo passo: **`auction/`**.
+scorso" su punti e su valore realizzato (`docs/METODO.md` §6.12). Asta dal vivo
+(`auction/`) e formazione settimanale (`inseason/`) nell'applicazione. Suite verde (85 test).
 
 ## Applicazione
 

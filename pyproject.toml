@@ -12,6 +12,7 @@ dependencies = [
     "numpy",
     "openpyxl",
     "soccerdata",
+    "scipy",  # Spearman di pandas nel backtest
 ]
 
 [project.optional-dependencies]
